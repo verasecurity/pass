@@ -1,5 +1,8 @@
 {
-  "name": "passentry-updater",
+  "name": "passentry-vercel",
   "version": "1.0.0",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@vercel/kv": "^1.0.1"
+  }
 }
