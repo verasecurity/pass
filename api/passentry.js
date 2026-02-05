@@ -1,24 +1,27 @@
-export default function handler(req, res) {
-  // Current timestamp
+// api/update-pass.js
+export default async function handler(req, res) {
   const now = new Date().toISOString();
 
-  // Serial number from query or default
-  const serialNumber = req.query.serialNumber || "DEFAULT123";
+  const passId = req.query.passId; // or serialNumber, depending on your setup
+  if (!passId) return res.status(400).json({ error: "Missing passId" });
 
-  // JSON response for PassEntry
-  res.status(200).json({
-    serialNumber: serialNumber,
-    barcode: {
-      format: "PKBarcodeFormatQR",
-      message: `USER123|${now}`, // barcode includes timestamp
-      messageEncoding: "iso-8859-1"
+  const r = await fetch(`https://api.passentry.com/v1/passes/${passId}`, {
+    method: "PATCH",
+    headers: {
+      "Authorization": `Bearer ${process.env.PASSENTRY_API_KEY}`,
+      "Content-Type": "application/json",
     },
-    secondaryFields: [
-      {
-        key: "last_update",
-        label: "Last Refresh",
-        value: now
-      }
-    ]
+    body: JSON.stringify({
+      barcode: {
+        format: "PKBarcodeFormatQR",
+        message: `USER123|${now}`,
+        messageEncoding: "iso-8859-1"
+      },
+      // This is what triggers the push update in many pass platforms:
+      message: "Updated"
+    }),
   });
+
+  const data = await r.json().catch(() => ({}));
+  res.status(r.status).json({ ok: r.ok, now, data });
 }
