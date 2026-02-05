@@ -3,22 +3,37 @@ import { Redis } from "@upstash/redis";
 
 const redis = Redis.fromEnv();
 
+// Hard default (used when PassEntry doesn't provide a name)
+const DEFAULT_NAME = "Alex Birkir Gunnarsson";
+
 export default async function handler(req, res) {
+  // Prevent caching anywhere in the chain
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+
   const serialNumber = req.query.serialNumber || "DEFAULT123";
 
-  // Þú getur seinna tengt þetta við alvöru DB.
-  // Í bili: senda ?name=... og ?date=... ef þú vilt.
-  const name = req.query.name || "John Doe";
-  const date = req.query.date || new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  // If you ever *do* pass a name manually (?name=...), it will override the default.
+  // Otherwise the default is Alex Birkir Gunnarsson.
+  const name = (req.query.name && String(req.query.name).trim()) || DEFAULT_NAME;
 
-  // Þetta breytist á hverju refresh -> Wallet fær nýja útgáfu -> "Updated just now"
+  // Date shown on the pass (you can hardcode if you want)
+  const date = (req.query.date && String(req.query.date).trim()) || new Date().toISOString().slice(0, 10);
+
+  // Changes every request => Wallet sees a new pass version when it actually fetches an update
   const lastRefresh = new Date().toISOString();
 
-  // Lesum síðasta scan (vistað af api/scan.js)
-  const lastScanned = (await redis.get(`scan:${serialNumber}`)) || "—";
+  // Last scanned stored by /api/scan
+  let lastScanned = "—";
+  try {
+    lastScanned = (await redis.get(`scan:${serialNumber}`)) || "—";
+  } catch {
+    // If Redis env vars aren't set, don't crash the pass endpoint
+    lastScanned = "—";
+  }
 
-  // Scanner-readable payload + fast signature
-  // Haltu þessu einföldu (ASCII-ish) fyrir skannara.
+  // Scanner-readable payload + fixed signature
   const barcodeMessage =
     `ID=${serialNumber};` +
     `NAME=${name};` +
@@ -26,7 +41,7 @@ export default async function handler(req, res) {
     `SIG=iceland;` +
     `REFRESH=${lastRefresh}`;
 
-  // Terms text (bak hlið) - skipt niður í bita
+  // Terms (back side), split into chunks for Wallet display reliability
   const termsLines = [
     "ÚTGEFANDI SKÍRTEINIS:",
     "Ríkislögreglustjóri",
@@ -68,29 +83,24 @@ export default async function handler(req, res) {
     });
   }
 
-  // Back: last scanned + terms
-  const backFields = [
-    { key: "last_scanned", label: "Last Scanned", value: lastScanned },
-    ...termsBackFields
-  ];
-
   res.status(200).json({
     serialNumber,
 
-    // PDF417 er oft best fyrir handheld scanners
+    // PDF417 tends to be scanner-friendly
     barcode: {
       format: "PKBarcodeFormatPDF417",
       message: barcodeMessage,
       messageEncoding: "iso-8859-1"
     },
 
-    // Framhlið: bara nafn + dagsetning
+    // Front: only Name + Date
     primaryFields: [{ key: "name", label: "Name", value: name }],
     secondaryFields: [{ key: "date", label: "Date", value: date }],
 
-    // Hjálpar að sýna refresh time (og breytist alltaf)
+    // Changes every refresh
     auxiliaryFields: [{ key: "last_refresh", label: "Last Refresh", value: lastRefresh }],
 
-    backFields
+    // Back: last scanned + terms
+    backFields: [{ key: "last_scanned", label: "Last Scanned", value: lastScanned }, ...termsBackFields]
   });
 }
