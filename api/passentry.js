@@ -1,26 +1,32 @@
 // api/passentry.js
-import { kv } from "@vercel/kv";
+import { Redis } from "@upstash/redis";
+
+const redis = Redis.fromEnv();
 
 export default async function handler(req, res) {
   const serialNumber = req.query.serialNumber || "DEFAULT123";
 
-  // Put your real name lookup here (DB), or pass it via query for now.
+  // Þú getur seinna tengt þetta við alvöru DB.
+  // Í bili: senda ?name=... og ?date=... ef þú vilt.
   const name = req.query.name || "John Doe";
-
-  // Date shown on the pass (issue date / valid-to / whatever you want)
   const date = req.query.date || new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
-  // This forces "Updated just now" because it changes on every refresh
+  // Þetta breytist á hverju refresh -> Wallet fær nýja útgáfu -> "Updated just now"
   const lastRefresh = new Date().toISOString();
 
-  // Read last scan time saved by api/scan.js
-  const lastScanned = (await kv.get(`scan:${serialNumber}`)) || "—";
+  // Lesum síðasta scan (vistað af api/scan.js)
+  const lastScanned = (await redis.get(`scan:${serialNumber}`)) || "—";
 
-  // Scanner-readable payload + fixed signature
-  // Keep ASCII-ish to avoid weird scanner decoding issues.
-  const barcodeMessage = `ID=${serialNumber};NAME=${name};DATE=${date};SIG=iceland;REFRESH=${lastRefresh}`;
+  // Scanner-readable payload + fast signature
+  // Haltu þessu einföldu (ASCII-ish) fyrir skannara.
+  const barcodeMessage =
+    `ID=${serialNumber};` +
+    `NAME=${name};` +
+    `DATE=${date};` +
+    `SIG=iceland;` +
+    `REFRESH=${lastRefresh}`;
 
-  // Terms (back of pass) split into chunks so Wallet displays reliably
+  // Terms text (bak hlið) - skipt niður í bita
   const termsLines = [
     "ÚTGEFANDI SKÍRTEINIS:",
     "Ríkislögreglustjóri",
@@ -62,7 +68,7 @@ export default async function handler(req, res) {
     });
   }
 
-  // Also show last scanned on the back (optional but useful)
+  // Back: last scanned + terms
   const backFields = [
     { key: "last_scanned", label: "Last Scanned", value: lastScanned },
     ...termsBackFields
@@ -71,21 +77,20 @@ export default async function handler(req, res) {
   res.status(200).json({
     serialNumber,
 
-    // Most handheld scanners handle PDF417 well.
+    // PDF417 er oft best fyrir handheld scanners
     barcode: {
       format: "PKBarcodeFormatPDF417",
       message: barcodeMessage,
       messageEncoding: "iso-8859-1"
     },
 
-    // Front of pass: only name + date (as requested)
+    // Framhlið: bara nafn + dagsetning
     primaryFields: [{ key: "name", label: "Name", value: name }],
     secondaryFields: [{ key: "date", label: "Date", value: date }],
 
-    // This changing field helps ensure the pass content changes every refresh
+    // Hjálpar að sýna refresh time (og breytist alltaf)
     auxiliaryFields: [{ key: "last_refresh", label: "Last Refresh", value: lastRefresh }],
 
-    // Back of pass: last scanned + terms
     backFields
   });
 }
